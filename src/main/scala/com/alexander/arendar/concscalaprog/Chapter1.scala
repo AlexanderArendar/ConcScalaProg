@@ -22,7 +22,7 @@ object Chapter1 {
 
   def lexPermutations(phrase:String):Seq[String] = {
     val chars = phrase.toSeq
-    
+
     val combs = for{
       i <- 1 to chars.size
       head = phrase(i-1)
