@@ -1,7 +1,8 @@
 package com.alexander.arendar.concscalaprog
 
-import scala.io.StdIn
+import java.util.concurrent.LinkedBlockingQueue
 
+import scala.collection.mutable
 
 object Chapter2 {
 
@@ -24,70 +25,100 @@ object Chapter2 {
     }
 
   final class SyncVar[T]{
-    private val lock = new AnyRef
 
     @volatile
     private var value:Option[T] = None
 
-    def getWait():T = lock.synchronized{
+    def getWait():T = this.synchronized{
       var completed = false
       while(! completed) {
-        if (isEmpty) lock.wait()
+        if (isEmpty) this.wait()
         if (nonEmpty) {
           completed = true
         }
       }
-      val result = this.value.get
-      this.value = None
-      lock.notifyAll()
+      val result = value.get
+      value = None
+      this.notifyAll()
       result
     }
 
-    def putWait(value:T):Unit = lock.synchronized{
+    def putWait(t:T):Unit = this.synchronized{
       var completed = false
       while(! completed){
-        if(nonEmpty) lock.wait()
+        if(nonEmpty) this.wait()
         if(isEmpty){
-          this.value = Some(value)
+          value = Some(t)
           log("put: " + value)
           completed = true
         }
       }
-      lock.notify()
+      this.notify()
     }
 
-    def isEmpty:Boolean = this.value.isEmpty
+    private def isEmpty:Boolean = value.isEmpty
 
-    def nonEmpty:Boolean = ! isEmpty
+    private def nonEmpty:Boolean = ! isEmpty
+  }
+
+  final class SyncQueue[T](val capacity:Int){
+    @volatile
+    private var queue:java.util.concurrent.LinkedBlockingQueue[T] = new LinkedBlockingQueue[T](capacity)
+
+    def getWait():T = queue.take()
+
+    def putWait(t:T):Unit = queue.put(t)
+  }
+
+  final class SyncQueue2[T](val capacity:Int){
+    @volatile
+    private var queue:mutable.Queue[T] = new mutable.Queue[T]()
+
+    def getWait():T = this.synchronized{
+      while(queue.isEmpty){
+        this.wait()
+      }
+      this.notifyAll()
+      queue.dequeue()
+    }
+
+    def putWait(t:T):Unit = this.synchronized{
+      while(queue.size >= capacity){
+        this.wait()
+      }
+      queue.enqueue(t)
+      log("size: " + queue.size)
+      this.notifyAll()
+    }
   }
 
   def main(args:Array[String]):Unit = {
-    val syncVar1 = new SyncVar[Int]()
+    val queue = new SyncQueue2[Any](10)
 
-    val producer1 = thread {
-      (0 until 100000) foreach{ i =>
-        syncVar1.putWait(i)
-      }
+    val producer1 = thread{
+      (1 to 500) foreach (i => queue.putWait(System.currentTimeMillis().toString))
     }
 
-    val producer2 = thread {
-      (500000 until 600000) foreach{ i =>
-        syncVar1.putWait(i)
-      }
+    val producer2 = thread{
+      (1 to 500) foreach (i => queue.putWait(i))
     }
 
-    val consumer1 = thread {
+    val consumer1 = thread{
       while(true){
-        log(syncVar1.getWait())
+        log(queue.getWait())
       }
     }
 
-    val consumer2 = thread {
+    val consumer2 = thread{
       while(true){
-        log(syncVar1.getWait())
+        log(queue.getWait())
       }
     }
 
+    producer1.join()
+    producer2.join()
+    consumer1.join()
+    consumer2.join()
 
   }
 
