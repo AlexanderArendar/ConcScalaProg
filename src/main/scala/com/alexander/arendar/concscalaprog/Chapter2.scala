@@ -3,6 +3,7 @@ package com.alexander.arendar.concscalaprog
 import java.util.concurrent.LinkedBlockingQueue
 
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 object Chapter2 {
 
@@ -92,34 +93,82 @@ object Chapter2 {
     }
   }
 
+  object UniqueIdService{
+    @volatile
+    var counter:Int = 0
+
+    def getUniqueId():Int = this.synchronized{
+      counter += 1
+      counter
+    }
+  }
+
+  private val transfers:ArrayBuffer[String] = ArrayBuffer()
+
+  def logTransfer(name:String, n:Int):Unit =
+    transfers.synchronized{
+      transfers += s"transfer to account '$name' = $n"
+    }
+
+  class Account(val name:String, var money:Int){
+    val id = UniqueIdService.getUniqueId()
+
+    override def toString: String = s"Account($name, $money)"
+  }
+
+  def add(account:Account, n:Int):Unit =
+    account.synchronized{
+      account.money += n
+      if(n > 10) logTransfer(account.name, n)
+    }
+
+  def send(sender:Account, recepient:Account, n:Int):Unit = {
+    def adjust():Unit = {
+      sender.money -= n
+      recepient.money += n
+    }
+
+    if(sender.id < recepient.id)
+      sender.synchronized{
+        while(sender.money == 0) sender.wait()
+        recepient.synchronized{
+          adjust()
+          recepient.notifyAll()
+        }
+      }
+    else
+      recepient.synchronized{
+        sender.synchronized{
+          while(sender.money == 0) sender.wait()
+          adjust()
+        }
+        recepient.notifyAll()
+      }
+  }
+
+  def sendAll(accounts:Set[Account], target:Account):Unit = {
+    accounts foreach (account => send(account, target, account.money))
+  }
+
   def main(args:Array[String]):Unit = {
-    val queue = new SyncQueue2[Any](10)
-
-    val producer1 = thread{
-      (1 to 500) foreach (i => queue.putWait(System.currentTimeMillis().toString))
+    val accounts = ArrayBuffer[Account]()
+    for(i <- 1 to 100) accounts += new Account(s"account$i", 1000)
+    val recepient = new Account("Alex", 0)
+    val (half1, half2) = accounts.splitAt(50)
+    val job1 = thread{sendAll(half1.toSet, recepient)}
+    val job2 = thread{sendAll(half2.toSet, recepient)}
+    val job3 = thread{
+      half1 foreach {a => send(recepient, a, 10); Thread.sleep(5)}
     }
-
-    val producer2 = thread{
-      (1 to 500) foreach (i => queue.putWait(i))
+    val job4 = thread{
+      half1 foreach {a => send(recepient, a, 10); Thread.sleep(5)}
     }
-
-    val consumer1 = thread{
-      while(true){
-        log(queue.getWait())
-      }
-    }
-
-    val consumer2 = thread{
-      while(true){
-        log(queue.getWait())
-      }
-    }
-
-    producer1.join()
-    producer2.join()
-    consumer1.join()
-    consumer2.join()
-
+    job1.join()
+    job2.join()
+    job3.join()
+    job4.join()
+    accounts foreach println
+    println(recepient)
   }
 
 }
