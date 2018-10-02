@@ -2,6 +2,7 @@ package com.alexander.arendar.concscalaprog
 
 import java.util.concurrent.LinkedBlockingQueue
 
+import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 
@@ -150,25 +151,75 @@ object Chapter2 {
     accounts foreach (account => send(account, target, account.money))
   }
 
+  case class Task(task:()=>Unit, priority:Int)
+
+  class PriorityTaskPool(concurrencyLevel:Int)(importantPriority:Int){outer=>
+
+    implicit val taskOrdering: math.Ordering[Task] = (x: Task, y: Task) => math.Ordering.Int.compare(x.priority, y.priority)
+
+    private var terminated:Boolean = false
+
+    private val queue:mutable.PriorityQueue[Task] = new mutable.PriorityQueue[Task]()
+
+    private class Worker extends Thread{
+
+      @tailrec
+      private def dequeueRecursively():Option[Task] = {
+        val item = if(!queue.isEmpty) Some(queue.dequeue()) else None
+        item match{
+          case Some(task) => if(task.priority >= importantPriority) item else dequeueRecursively()
+          case None => None
+        }
+      }
+
+      def poll():Option[Task] = outer.synchronized{
+        while(queue.isEmpty && !terminated) outer.wait()
+        if(!terminated) Some(queue.dequeue()) else dequeueRecursively()
+      }
+
+      @tailrec
+      override final def run(): Unit = {
+        poll() match{
+          case Some(item) => item.task(); run()
+          case None =>
+        }
+      }
+    }
+
+    private val workers:Iterable[Worker] = for(_ <- 1 to concurrencyLevel) yield new Worker()
+
+    workers.foreach(_.start())
+
+    def asynchronous(priority:Int)(task: =>Unit):Unit = {
+      this.synchronized{
+        if(!terminated){
+          queue.enqueue(Task(() => task, priority))
+          log(s"enqueued: $priority")
+          this.notifyAll()
+        }
+      }
+    }
+
+    def shutDown():Unit = this.synchronized{
+      terminated = true
+      this.notifyAll()
+    }
+  }
+
+
   def main(args:Array[String]):Unit = {
-    val accounts = ArrayBuffer[Account]()
-    for(i <- 1 to 100) accounts += new Account(s"account$i", 1000)
-    val recepient = new Account("Alex", 0)
-    val (half1, half2) = accounts.splitAt(50)
-    val job1 = thread{sendAll(half1.toSet, recepient)}
-    val job2 = thread{sendAll(half2.toSet, recepient)}
-    val job3 = thread{
-      half1 foreach {a => send(recepient, a, 10); Thread.sleep(5)}
+    val taskPool = new PriorityTaskPool(3)(5)
+    val job1 = thread{
+      (50 to 150) foreach(i => taskPool.asynchronous(i)(log(i)))
     }
-    val job4 = thread{
-      half1 foreach {a => send(recepient, a, 10); Thread.sleep(5)}
+
+    val job2 = thread{
+      (1 to 100) foreach(i => taskPool.asynchronous(i)(log(i)))
     }
+
     job1.join()
+    taskPool.shutDown()
     job2.join()
-    job3.join()
-    job4.join()
-    accounts foreach println
-    println(recepient)
   }
 
 }
