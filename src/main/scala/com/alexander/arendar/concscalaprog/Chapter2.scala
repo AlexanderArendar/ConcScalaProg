@@ -95,7 +95,6 @@ object Chapter2 {
   }
 
   object UniqueIdService{
-    @volatile
     var counter:Int = 0
 
     def getUniqueId():Int = this.synchronized{
@@ -208,17 +207,15 @@ object Chapter2 {
 
 
   def main(args:Array[String]):Unit = {
-    val taskPool = new PriorityTaskPool(3)(5)
     val job1 = thread{
-      (50 to 150) foreach(i => taskPool.asynchronous(i)(log(i)))
+      (1 to 100) foreach (_ => log(UniqueIdService.getUniqueId()))
     }
 
     val job2 = thread{
-      (1 to 100) foreach(i => taskPool.asynchronous(i)(log(i)))
+      (1 to 100) foreach (_ => log(UniqueIdService.getUniqueId()))
     }
 
     job1.join()
-    taskPool.shutDown()
     job2.join()
   }
 
